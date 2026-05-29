@@ -23,7 +23,9 @@
 #include <QMessageBox>
 #include <QPixmap>
 #include <QPushButton>
+#include <QTabWidget>
 #include <QVBoxLayout>
+#include <QWidget>
 
 #include <cstdio>
 #include <ctime>
@@ -78,9 +80,12 @@ IarSettingsDialog::IarSettingsDialog(Engine *engine, QWidget *parent)
 }
 
 void IarSettingsDialog::buildUi() {
+	// Tabbed layout keeps the dialog short: only the tallest single tab drives
+	// the height, so the whole thing fits on small / vertical screens. The
+	// branding header and Save/Cancel stay outside the tabs.
 	auto *root = new QVBoxLayout(this);
-	root->setContentsMargins(18, 16, 18, 14);
-	root->setSpacing(14);
+	root->setContentsMargins(16, 14, 16, 12);
+	root->setSpacing(12);
 
 	auto *header = new QLabel(
 	    "<span style='color:#8b95a7;'>Powered by </span>"
@@ -91,92 +96,100 @@ void IarSettingsDialog::buildUi() {
 	header->setStyleSheet("font-size:15px;");
 	root->addWidget(header);
 
-	auto *connBox = new QGroupBox(obs_module_text("Group.Connection"), this);
-	auto *connForm = new QFormLayout(connBox);
+	auto *tabs = new QTabWidget(this);
+	root->addWidget(tabs, 1);
+
+	// --- Setup tab: pairing code + the relay connection fields. ---
+	auto *setupTab = new QWidget(tabs);
+	auto *connForm = new QFormLayout(setupTab);
 	connForm->setSpacing(10);
 	connForm->setContentsMargins(14, 14, 14, 14);
 	connForm->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
 	connForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
 
-	pairing_ = new QLineEdit(connBox);
+	pairing_ = new QLineEdit(setupTab);
 	pairing_->setPlaceholderText(obs_module_text("Field.Pairing.Placeholder"));
 	connForm->addRow(obs_module_text("Field.Pairing"), pairing_);
-	pairingStatus_ = new QLabel("", connBox);
+	pairingStatus_ = new QLabel("", setupTab);
 	pairingStatus_->setStyleSheet("color:#38d39f;");
+	pairingStatus_->setWordWrap(true);
 	connForm->addRow("", pairingStatus_);
 
-	relayUrl_ = new QLineEdit(connBox);
+	relayUrl_ = new QLineEdit(setupTab);
 	relayUrl_->setPlaceholderText("wss://relay.example.com/contribute");
 	connForm->addRow(obs_module_text("Field.RelayURL"), relayUrl_);
 
-	streamId_ = new QLineEdit(connBox);
+	streamId_ = new QLineEdit(setupTab);
 	streamId_->setPlaceholderText("alerts-main");
 	connForm->addRow(obs_module_text("Field.StreamID"), streamId_);
 
-	token_ = new QLineEdit(connBox);
+	token_ = new QLineEdit(setupTab);
 	token_->setEchoMode(QLineEdit::Password);
 	token_->setPlaceholderText(obs_module_text("Field.Token.Placeholder"));
 	connForm->addRow(obs_module_text("Field.Token"), token_);
 
-	listenerToken_ = new QLineEdit(connBox);
+	listenerToken_ = new QLineEdit(setupTab);
 	listenerToken_->setPlaceholderText(obs_module_text("Field.ListenerToken.Placeholder"));
 	connForm->addRow(obs_module_text("Field.ListenerToken"), listenerToken_);
-	root->addWidget(connBox);
+	tabs->addTab(setupTab, obs_module_text("Tab.Setup"));
 
-	auto *audioBox = new QGroupBox(obs_module_text("Group.Audio"), this);
-	auto *audioForm = new QFormLayout(audioBox);
+	// --- Audio tab: track + codec parameters. ---
+	auto *audioTab = new QWidget(tabs);
+	auto *audioForm = new QFormLayout(audioTab);
 	audioForm->setSpacing(10);
 	audioForm->setContentsMargins(14, 14, 14, 14);
 	audioForm->setLabelAlignment(Qt::AlignRight | Qt::AlignVCenter);
-	track_ = new QComboBox(audioBox);
+	track_ = new QComboBox(audioTab);
 	for (int i = 1; i <= 6; ++i)
 		track_->addItem(QString("Track %1").arg(i), i);
 	audioForm->addRow(obs_module_text("Field.Track"), track_);
-	auto *codec = new QLabel("Opus", audioBox);
+	auto *codec = new QLabel("Opus", audioTab);
 	audioForm->addRow(obs_module_text("Field.Codec"), codec);
-	bitrate_ = new QComboBox(audioBox);
+	bitrate_ = new QComboBox(audioTab);
 	for (int kbps : {24, 32, 48, 64, 96})
 		bitrate_->addItem(QString("%1 kbps").arg(kbps), kbps * 1000);
 	audioForm->addRow(obs_module_text("Field.Bitrate"), bitrate_);
-	channels_ = new QComboBox(audioBox);
+	channels_ = new QComboBox(audioTab);
 	channels_->addItem(obs_module_text("Channels.Mono"), 1);
 	channels_->addItem(obs_module_text("Channels.Stereo"), 2);
 	audioForm->addRow(obs_module_text("Field.Channels"), channels_);
-	frame_ = new QComboBox(audioBox);
+	frame_ = new QComboBox(audioTab);
 	frame_->addItem("20 ms", 20);
 	frame_->addItem("10 ms", 10);
 	audioForm->addRow(obs_module_text("Field.FrameSize"), frame_);
-	reconnect_ = new QCheckBox(obs_module_text("Field.Reconnect"), audioBox);
+	reconnect_ = new QCheckBox(obs_module_text("Field.Reconnect"), audioTab);
 	audioForm->addRow("", reconnect_);
-	root->addWidget(audioBox);
+	tabs->addTab(audioTab, obs_module_text("Tab.Audio"));
 
-	auto *listenBox = new QGroupBox(obs_module_text("Group.Listener"), this);
-	auto *lv = new QVBoxLayout(listenBox);
+	// --- Listener tab: copyable URL, diagnostics, and the Moblin QR. ---
+	auto *listenTab = new QWidget(tabs);
+	auto *lv = new QVBoxLayout(listenTab);
 	lv->setSpacing(10);
 	lv->setContentsMargins(14, 14, 14, 14);
-	listenerUrl_ = new QLabel("-", listenBox);
+	listenerUrl_ = new QLabel("-", listenTab);
 	listenerUrl_->setTextInteractionFlags(Qt::TextSelectableByMouse);
 	listenerUrl_->setWordWrap(true);
 	listenerUrl_->setStyleSheet("font-family: monospace;");
 	lv->addWidget(listenerUrl_);
 	auto *row = new QHBoxLayout();
-	auto *copyBtn = new QPushButton(obs_module_text("Btn.CopyListener"), listenBox);
-	auto *diagBtn = new QPushButton(obs_module_text("Btn.Diagnostics"), listenBox);
+	auto *copyBtn = new QPushButton(obs_module_text("Btn.CopyListener"), listenTab);
+	auto *diagBtn = new QPushButton(obs_module_text("Btn.Diagnostics"), listenTab);
 	row->addWidget(copyBtn);
 	row->addWidget(diagBtn);
 	lv->addLayout(row);
 
 	// Moblin QR: scan to point Moblin's Web browser at the listener page.
-	qrLabel_ = new QLabel(listenBox);
+	qrLabel_ = new QLabel(listenTab);
 	qrLabel_->setAlignment(Qt::AlignCenter);
 	qrLabel_->setVisible(false);
 	lv->addWidget(qrLabel_);
-	auto *qrCaption = new QLabel(obs_module_text("Listener.MoblinQR"), listenBox);
+	auto *qrCaption = new QLabel(obs_module_text("Listener.MoblinQR"), listenTab);
 	qrCaption->setAlignment(Qt::AlignCenter);
 	qrCaption->setWordWrap(true);
 	qrCaption->setStyleSheet("color:#8b95a7;font-size:11px;");
 	lv->addWidget(qrCaption);
-	root->addWidget(listenBox);
+	lv->addStretch(1);
+	tabs->addTab(listenTab, obs_module_text("Tab.Listener"));
 
 	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, this);
 	root->addWidget(buttons);
@@ -281,11 +294,11 @@ void IarSettingsDialog::save() {
 	if (!v.ok) {
 		QString msg;
 		for (const auto &e : v.errors)
-			msg += "• " + QString::fromStdString(e) + "\n";
+			msg += "- " + QString::fromStdString(e) + "\n";
 		if (!v.warnings.empty()) {
 			msg += "\n";
 			for (const auto &wn : v.warnings)
-				msg += "⚠ " + QString::fromStdString(wn) + "\n";
+				msg += "Warning: " + QString::fromStdString(wn) + "\n";
 		}
 		QMessageBox::warning(this, obs_module_text("Title"), msg.trimmed());
 		return; // keep the dialog open so the user can fix it

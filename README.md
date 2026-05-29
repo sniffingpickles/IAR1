@@ -49,15 +49,22 @@ xattr -dr com.apple.quarantine ~/Library/Application\ Support/obs-studio/plugins
 
 ### <img src="https://img.shields.io/badge/-Windows-0078D6?logo=windows&logoColor=white" height="18"> Windows
 
-1. Download `irl-audio-return-windows-x64.zip` and unzip it (right-click,
-   **Extract All**).
-2. Inside you will find an `obs-plugins` folder and a `data` folder. Copy both
+1. Download `irl-audio-return-windows-x64.zip`.
+2. **Important - unblock the file first.** Right-click the downloaded `.zip`,
+   choose **Properties**, tick **Unblock** at the bottom, then click **OK**.
+   Do this **before** extracting. If you skip it, Windows marks the files inside
+   as blocked and the plugin's bundled libraries will fail to load.
+3. Now unzip it (right-click, **Extract All**).
+4. Inside you will find an `obs-plugins` folder and a `data` folder. Copy both
    into your OBS install folder, usually:
    ```
    C:\Program Files\obs-studio\
    ```
    When Windows asks, choose **Replace** or **Merge** the folders.
-3. Quit and reopen OBS.
+5. Quit and reopen OBS.
+
+If you already extracted without unblocking and OBS does not list the plugin,
+delete the copied files, then redo steps 2-4 (unblock the zip first).
 
 <br>
 
