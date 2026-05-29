@@ -1,0 +1,118 @@
+name: Build
+
+# Standalone CI for the IRL Audio Return OBS plugin repository (this repo's root
+# IS the plugin). Builds installable macOS + Windows artifacts and runs the
+# OBS-independent core unit tests. Uses the official OBS plugin-template presets,
+# which auto-download obs-studio, obs-deps and Qt6 during configuration.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-tests:
+    name: Core tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Opus (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libopus-dev pkg-config ninja-build
+      - name: Install Opus (macOS)
+        if: runner.os == 'macOS'
+        run: brew install opus pkg-config
+      - name: Install Opus (Windows)
+        if: runner.os == 'Windows'
+        run: vcpkg install opus:x64-windows
+      - name: Build core tests (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -S test -B build_coretest -DCMAKE_BUILD_TYPE=Debug
+          cmake --build build_coretest
+      - name: Build core tests (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -S test -B build_coretest -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake"
+          cmake --build build_coretest --config Debug
+      - name: Run core tests
+        run: ctest --test-dir build_coretest --output-on-failure --build-config Debug
+
+  macos:
+    name: Plugin - macOS (universal)
+    runs-on: macos-15 # Xcode 16 / macOS 15 SDK required by libobs
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset macos-ci
+      - run: cmake --build --preset macos-ci
+      - name: Stage bundle
+        run: |
+          mkdir -p dist
+          cp -R build_macos/RelWithDebInfo/irl-audio-return.plugin dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: irl-audio-return-macos-universal
+          path: dist/
+
+  windows:
+    name: Plugin - Windows x64
+    runs-on: windows-2022
+    env:
+      OPENSSL_ROOT_DIR: "C:/Program Files/OpenSSL"
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake --preset windows-ci-x64
+      - run: cmake --build --preset windows-ci-x64
+      - name: Stage plugin (self-contained OBS layout)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $rundir = "build_x64\rundir\RelWithDebInfo"
+          New-Item -ItemType Directory -Force -Path dist\obs-plugins\64bit | Out-Null
+          New-Item -ItemType Directory -Force -Path dist\data\obs-plugins | Out-Null
+
+          # Plugin binary
+          $dll = Get-ChildItem -Path build_x64 -Recurse -Filter irl-audio-return.dll | Select-Object -First 1
+          if (-not $dll) { throw "irl-audio-return.dll not found in build output" }
+          Copy-Item $dll.FullName dist\obs-plugins\64bit\
+
+          # Plugin data (locale, etc.)
+          $data = Get-ChildItem -Path $rundir -Directory -Filter irl-audio-return -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($data) {
+            Copy-Item -Recurse -Force $data.FullName dist\data\obs-plugins\irl-audio-return
+          } else {
+            New-Item -ItemType Directory -Force -Path dist\data\obs-plugins\irl-audio-return\locale | Out-Null
+            Copy-Item data\locale\en-US.ini dist\data\obs-plugins\irl-audio-return\locale\
+          }
+
+          # Bundle the OpenSSL runtime the WSS client links against so the plugin
+          # loads on machines without a separate OpenSSL install. OBS adds the
+          # plugin's own folder to the DLL search path (SetDllDirectory), so these
+          # resolve from obs-plugins/64bit.
+          $ssl = @()
+          foreach ($root in @($env:OPENSSL_ROOT_DIR, "C:\Program Files\OpenSSL", "C:\Program Files\OpenSSL-Win64")) {
+            if ($root -and (Test-Path $root)) {
+              $ssl += Get-ChildItem -Path $root -Recurse -Include libssl-3-x64.dll,libcrypto-3-x64.dll -ErrorAction SilentlyContinue
+            }
+          }
+          $ssl = $ssl | Sort-Object Name -Unique
+          foreach ($f in $ssl) { Copy-Item $f.FullName dist\obs-plugins\64bit\ }
+
+          $names = @(Get-ChildItem dist\obs-plugins\64bit -Filter *.dll | Select-Object -ExpandProperty Name)
+          Write-Host "Staged in obs-plugins/64bit: $($names -join ', ')"
+          if (-not (($names -contains 'libssl-3-x64.dll') -and ($names -contains 'libcrypto-3-x64.dll'))) {
+            throw "OpenSSL runtime DLLs were not bundled (searched OPENSSL_ROOT_DIR and default install paths)."
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: irl-audio-return-windows-x64
+          path: dist/
